@@ -46,28 +46,55 @@ public:
     // Implement these functions:
     Stack()
     { // initialize the stack
+        top=nullptr;
+        count=0;
     }
     void push(const T &val)
     {
-
+        if(count>=MAX_STACK_DEPTH){
+            return;
+        }
+        Node *temp=new Node{val,top};
+        top=temp;
+        count++;
         // pushes the value on the stack if max limit is not reached yet.
     }
     T pop()
     {
+        if(top==nullptr){
+            return T();
+        }
+        Node *temp =top;
+        T val=temp->data;
+        top=top->next;
+        delete temp;
+        count--;
+        return val;
         // pop the top value on the stack
     }
     T &peek()
     {
+        return top->data;
         // returns the top value on the stack
     }
     bool isEmpty()
     {
+        return count==0;
     }
     int32_t depth()
     {
+        return count;
     }
     int32_t snapshot_into(T out[], int32_t maxLen)
     {
+        int32_t i=0;
+        Node *curr=top;
+        while(curr!=nullptr&&i<maxLen){
+            out[i]=curr->data;
+            curr=curr->next;
+            i++;
+        }
+        return i;
         // copies every frame, top to bottom in the array given as a parameter
         // this is what buildSnapshot() call, returns count written
     }
@@ -91,16 +118,33 @@ public:
     // Implement these functions
     Timeline()
     {
+        head=nullptr;
+        tail=nullptr;
+        stepCount=0;
     }
     void record(Snapshot *s)
     {
+        TimelineNode *temp=new TimelineNode();
+        temp->data=s;
+        temp->next=nullptr;
+        temp->prev=tail;
+        if(tail==nullptr){
+            head=temp;
+        }
+        else{
+            tail->next=temp;
+        }
+        tail=temp;
+        stepCount++;
         // add record in the timeline
     }
     TimelineNode *begin()
     {
+        return head;
     }
     int32_t getStepCount()
     {
+        return stepCount;
     }
 };
 
