@@ -201,18 +201,81 @@ struct PendingPatch
 bool readSourceLine(ifstream &in, string &out)
 {
     // reads the next nonblank line
+    string line;
+    while (getline(in,line)){
+        if(!line.empty()&&line.back()=='\r'){
+            line.pop_back();
+        }
+        int32_t len=line.size();
+        for(int32_t i=0;i<len;i++){
+            if(line[i]!=' ' && line[i]!='\t'){
+                out = line;
+                return true;
+            }
+        }
+    }
+    return false;
 }
 string firstWord(const string &line)
 {
     // returns first word from the input string
+    int32_t len=line.size();
+    int32_t i=0;
+    while(i<len && (line[i] == ' ' || line[i]=='\t')){
+        i++;
+    }
+    string word="";
+    while(i<len && (line[i] != ' ' && line[i] != '\t')){
+        word+=line[i];
+        i++;
+    }
+    return word;
 }
 string secondWord(const string &line)
 {
     // returns the second word
+    string first=firstWord(line);
+    if(first.empty()){
+        return "";
+    }
+    int32_t pos=line.find(first);
+    string rest=line.substr(pos+first.size());
+    return firstWord(rest);
 }
 bool validateProgram(const char *sourcePath)
 {
     // for each func defined there should be exactly one func_end and no nested funcs allowed - 
+    ifstream in(sourcePath);
+    if(!in.is_open()){
+        cout<< "Error: cannot open "<<sourcePath<<endl;
+        return false;
+    }
+    bool inside=false;
+    int32_t lineNo=0;
+    string line;
+    while(readSourceLine(in,line)){
+        lineNo++;
+        string word=firstWord(line);
+        if(word=="func"){
+            if(inside){
+                cout<<"Error: nested func at " << lineNo <<endl;
+                return false;
+            }
+            inside=true;
+        }
+        else if(word=="func_end"){
+            if(!inside){
+                cout<<"Error: func_end without func at "<<lineNo << endl;
+                return false;
+            }
+            inside=false;
+        }
+    }
+    if(inside){
+        cout<<"Error: func without func_end" << endl;
+        return false;
+    }
+    return true;
 }
 
 // PASS 0x1: RESOLVE() -> resolve.bin
