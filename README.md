@@ -47,4 +47,4 @@ Nesting is not allowed so at most one function can be open at any time. A single
 
 
 **Next:** Pass 0x1 which writes `resolve.bin` and patches `call` targets.
-- took a whole day to understand this from 4-5 people in university.
+- took a whole day to understand this from 4-5 people in university.s

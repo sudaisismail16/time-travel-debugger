@@ -410,14 +410,11 @@ int32_t main()
 {
     if (!validateProgram("source.bin"))
     {
+        // send an error response instead of a .tdbg file
         return 1;
     }
 
     int64_t mainOffset = resolveProgram("source.bin", "resolve.bin");
-    if (mainOffset == -1)
-    {
-        return 1;
-    }
 
     Timeline timeline;
     executeProgram("resolve.bin", mainOffset, timeline);
