@@ -7,7 +7,6 @@
 //   3. Pass 0X2   -- execute resolve.bin: tokenize ONE line at a time, update the call stack, take a snapshot -> Timeline
 //   4. Pass 0X3   -- serialize Timeline -> session.tdbg(header + snapshot records + dense index)
 
-
 #include <iostream>
 #include <string>
 #include <cstdint>
@@ -17,7 +16,6 @@
 #include <cstdint>
 #include <cstdio>
 using namespace std;
-
 // ---- Constants ----
 const int32_t MAX_VARS_PER_FRAME = 16;
 const int32_t MAX_STACK_DEPTH = 64;
@@ -29,11 +27,9 @@ const int32_t IO_BUFFER_SIZE = 64 * 1024;                  // fixed buffer for s
 const int32_t SOCKET_TIMEOUT_SEC = 5;                      // TODO: apply as SO_RCVTIMEO so a deadclient can't hang the server forever
 
 // ---- Custom data structures
-
 // Stack: back the live Call Stack during execution
 template <typename T>
-class Stack
-{
+class Stack{
     struct Node
     {
         T data;
@@ -100,17 +96,14 @@ public:
     }
 };
 
-
 // Timeline : doubly linked list of Snapshots
 struct Snapshot; // fwd declaration;
-struct TimelineNode
-{
+struct TimelineNode{
     Snapshot *data;
     TimelineNode *next;
     TimelineNode *prev;
 };
-class Timeline
-{
+class Timeline{
     TimelineNode *head, *tail;
     int32_t stepCount;
 
@@ -149,13 +142,11 @@ public:
 };
 
 // Core structs
-struct Variable
-{
+struct Variable{
     string name;
     int32_t value;
 };
-struct Frame
-{
+struct Frame{
     string func_name;
     int32_t argc;
     Variable argv[MAX_VARS_PER_FRAME];
@@ -163,20 +154,17 @@ struct Frame
     Variable locals[MAX_VARS_PER_FRAME];
     int32_t localCount;
 };
-struct Snapshot
-{
+struct Snapshot{
     Frame callStack[MAX_STACK_DEPTH];
     int32_t stackDepth;
 };
-struct TTDBHeader
-{
+struct TTDBHeader{
     char magic[4]; // "TTDB"
     int32_t version;
     int32_t stepCount;
     int64_t indexOffset;
 };
-void writeHeader(FILE *f, const TTDBHeader &h)
-{
+void writeHeader(FILE *f, const TTDBHeader &h){
     fwrite(h.magic, 1, 4, f);
     fwrite(&h.version, sizeof(int32_t), 1, f);
 
@@ -184,22 +172,17 @@ void writeHeader(FILE *f, const TTDBHeader &h)
 }
 
 // resolve.bin - bookkeeping
-struct FuncEntry
-{
+struct FuncEntry{
     string funcName;
     int64_t byteOffsetInResolveBin; // where this function's FUNC header record sits
 };
-struct PendingPatch
-{
+struct PendingPatch{
     int64_t byteOffsetOfOffsetField; // where in resolve.bin to seek back and overwrite
     string targetFuncName;
 };
 
-
-
 // PASS 0x0: READING source.bin + VALIDITY CHECK
-bool readSourceLine(ifstream &in, string &out)
-{
+bool readSourceLine(ifstream &in, string &out){
     // reads the next nonblank line
     string line;
     while (getline(in,line)){
@@ -216,8 +199,7 @@ bool readSourceLine(ifstream &in, string &out)
     }
     return false;
 }
-string firstWord(const string &line)
-{
+string firstWord(const string &line){
     // returns first word from the input string
     int32_t len=line.size();
     int32_t i=0;
@@ -231,8 +213,7 @@ string firstWord(const string &line)
     }
     return word;
 }
-string secondWord(const string &line)
-{
+string secondWord(const string &line){
     // returns the second word
     string first=firstWord(line);
     if(first.empty()){
@@ -242,8 +223,7 @@ string secondWord(const string &line)
     string rest=line.substr(pos+first.size());
     return firstWord(rest);
 }
-bool validateProgram(const char *sourcePath)
-{
+bool validateProgram(const char *sourcePath){
     // for each func defined there should be exactly one func_end and no nested funcs allowed - 
     ifstream in(sourcePath);
     if(!in.is_open()){
@@ -283,10 +263,29 @@ int64_t writeResolveRecord(FILE *f, int64_t offsetField, const string &text)
 {
     // writes one [offset(8B)][size(4B)][string] record at the current file position
     // returns this record's own starting byte position
+    int64_t start=ftell(f);
+    int32_t size=text.size();
+    fwrite(&offsetField,sizeof(int64_t),1,f);
+    fwrite(&size,sizeof(int32_t),1,f);
+    fwrite(text.c_str(),1,size,f);
+    return start;
 }
 int64_t readResolveRecord(FILE *f, string &outText)
 {
     // reads one record at the current position and advances past it, returns the offset field - the raw line text comes back untouched in outText.
+    int64_t offsetField;
+    int32_t size;
+    if(fread(&offsetField,sizeof(int64_t),1,f)!=1){
+        return -1;
+    }
+    if(fread(&size,sizeof(int32_t),1,f)!=1){
+        return -1;
+    }
+    outText.resize(size);
+    if(size>0 && (int32_t)fread(&outText[0],1,size,f)!=size){
+        return -1;
+    }
+    return offsetField;
 }
 int64_t resolveProgram(const char *sourcePath, const char *resolveBinPath)
 {
@@ -302,6 +301,66 @@ int64_t resolveProgram(const char *sourcePath, const char *resolveBinPath)
     // with its target's position. Patching happens after the full write
     // Returns the byte offset of main's FUNC header record.
     // if there is no main return the error 
+    ifstream in(sourcePath);
+    if(!in.is_open()){
+        cout<<"Error: cant open "<<sourcePath<<endl;
+        return -1;
+    }
+    FILE *out=fopen(resolveBinPath,"w+b");
+    if(out==nullptr){
+        cout<<"Error: cant create "<<resolveBinPath<<endl;
+        return -1;
+    }
+
+
+    string line;
+    while(readSourceLine(in,line)){
+        string word=firstWord(line);
+        int64_t start=ftell(out);
+        if(word=="func" && funcCount<MAX_FUNCS){
+            funcArray[funcCount].funcName =secondWord(line);
+            funcArray[funcCount].byteOffsetInResolveBin = start;
+            funcCount++;
+        }
+        else if(word == "call" && patchCount<MAX_PATCHES){
+            patches[patchCount].byteOffsetOfOffsetField=start;
+            patches[patchCount].targetFuncName=secondWord(line);
+            patchCount++;
+        }
+        writeResolveRecord(out,start,line);
+    }
+    in.close();
+
+    for(int32_t i=0;i<patchCount;i++){
+        int32_t found=-1;
+        for(int32_t j = 0;j<funcCount;j++){
+            if(funcArray[j].funcName==patches[i].targetFuncName){
+                found = j;
+                break;
+            }
+        }
+        if(found==-1){
+            cout<<"Error: called undefined func "<<patches[i].targetFuncName<<endl;
+            fclose(out);
+            return -1;
+        }
+        fseek(out,patches[i].byteOffsetOfOffsetField,SEEK_SET);
+        fwrite(&funcArray[found].byteOffsetInResolveBin,sizeof(int64_t),1,out);
+    }
+    int64_t mainOffset = -1;
+    for (int32_t j = 0; j < funcCount; j++)
+    {
+        if (funcArray[j].funcName == "main")
+            mainOffset = funcArray[j].byteOffsetInResolveBin;
+    }
+    fclose(out);
+
+    if (mainOffset == -1)
+    {
+        cout << "Error: no main function" << endl;
+        return -1;
+    }
+    return mainOffset;
 }
 
 // PASS 0x2: EXECUTION (tokenization happens here)
@@ -349,14 +408,16 @@ void writeTdbg(Timeline &timeline, const char *tdbgPath)
 // main section
 int32_t main()
 {
-
     if (!validateProgram("source.bin"))
     {
-        // send an error response instead of a .tdbg file
         return 1;
     }
 
     int64_t mainOffset = resolveProgram("source.bin", "resolve.bin");
+    if (mainOffset == -1)
+    {
+        return 1;
+    }
 
     Timeline timeline;
     executeProgram("resolve.bin", mainOffset, timeline);
