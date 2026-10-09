@@ -48,3 +48,21 @@ Nesting is not allowed so at most one function can be open at any time. A single
 
 **Next:** Pass 0x1 which writes `resolve.bin` and patches `call` targets.
 - took a whole day to understand this from 4-5 people in university.s
+
+### Day 4: [9 October] [1 PM] : Pass 0x1 
+**the idea**
+- when call foo k instructions runs it needs to find where foo starts
+- searching everytime would take alot of time so we store it somewhere
+- so we create resolve.bin file where every line has an address
+- except every call line has the address of the function it calls
+- the format is [address of this record: 8 bytes][length of text: 4 bytes][text]
+- so the next line starts at `address + 8 + 4 + length`
+
+**the execution**
+- `writeResolveRecord` writes one record. it reads the current position with `ftell` before writing, because that position is the records address.
+- `readResolveRecord` reads one record back in the same order and returns the offset field or -1 if fails.
+
+- `resolveProgram` does two jobs
+1. Write every line as a record. also note down where each function starts in `funcArray` and where each `call` line is in `patches`.
+2. After the whole file is written it goes back to each `call` record and overwrite its first 8 bytes with the address of the function it calls.
+
