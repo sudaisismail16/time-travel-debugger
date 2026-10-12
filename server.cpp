@@ -362,6 +362,50 @@ int64_t resolveProgram(const char *sourcePath, const char *resolveBinPath)
     }
     return mainOffset;
 }
+//helper function
+Variable *findVar(Frame &fr, const string &name){
+    for (int32_t i = 0; i < fr.argc; i++){
+        if (fr.argv[i].name == name){
+            return &fr.argv[i];
+        }
+    }
+    for (int32_t i = 0; i < fr.localCount; i++){
+        if (fr.locals[i].name == name){
+            return &fr.locals[i];
+        }
+    }
+    return nullptr;
+}
+
+bool isNumber(const string &s){
+    if (s.empty()){
+        return false;
+    }
+    int32_t i = 0;
+    if (s[0] == '-' && s.size() > 1){
+        i = 1;
+    }
+    for (; i < (int32_t)s.size(); i++){
+        if (s[i] < '0' || s[i] > '9'){
+            return false;
+        }
+    }
+    return true;
+}
+
+int32_t getValue(Frame &fr, const string &text, bool &ok){
+    if (isNumber(text)){
+        ok = true;
+        return stoi(text);
+    }
+    Variable *v = findVar(fr, text);
+    if (v == nullptr){
+        ok = false;
+        return 0;
+    }
+    ok = true;
+    return v->value;
+}
 
 // PASS 0x2: EXECUTION (tokenization happens here)
 enum TokenType
@@ -375,25 +419,212 @@ struct Token
     TokenType type;
     string text;
 };
-int32_t tokenizeLine(const string &line, Token tokens[], int32_t maxTokens)
-{
+int32_t tokenizeLine(const string &line, Token tokens[], int32_t maxTokens){
     // first word is always a instruction keyword
     // instruction set = [func, func_end, call, set, add, sub, mul and div]
     // next word is identifier like name of a function, variable name
     // after identifier all are the params/arg, space separated
+    int32_t len = line.size();
+    int32_t i = 0;
+    int32_t count = 0;
+    while (i < len && count < maxTokens){
+        while (i < len && (line[i] == ' ' || line[i] == '\t')){
+            i++;
+        }
+        if (i >= len){
+            break;
+        }
+        string word = "";
+        while (i < len && line[i] != ' ' && line[i] != '\t'){
+            word += line[i];
+            i++;
+        }
+        if (count == 0){
+            tokens[count].type = KEYWORD;
+        }
+        else if (count == 1){
+            tokens[count].type = IDENTIFIER;
+        }
+        else{
+            tokens[count].type = PARAM;
+        }
+        tokens[count].text = word;
+        count++;
+    }
+    return count;
 }
-Snapshot *buildSnapshot(Stack<Frame> &callStack)
-{
+Snapshot *buildSnapshot(Stack<Frame> &callStack){
     // build the snapshot based on the callStack given
+    Snapshot *s = new Snapshot();
+    s->stackDepth = callStack.snapshot_into(s->callStack, MAX_STACK_DEPTH);
+    return s;
 }
-void executeProgram(const char *resolveBinPath, int64_t mainOffset, Timeline &timeline)
-{
+void executeProgram(const char *resolveBinPath, int64_t mainOffset, Timeline &timeline){
     // initialize the call stack
     // make the main frame
     // push main frame on the call stack
 
     // implementation:
     // execute line by line, and according to the keyword perform action
+    FILE *f = fopen(resolveBinPath, "rb");
+    if (f == nullptr){
+        cout << "Error: cannot open " << resolveBinPath << endl;
+        return;
+    }
+    Stack<Frame> callStack;
+    string argNames[MAX_STACK_DEPTH][MAX_VARS_PER_FRAME];
+    Frame mainFrame = Frame();
+    mainFrame.func_name = "main";
+    mainFrame.argc = 0;
+    mainFrame.localCount = 0;
+    mainFrame.returnLine = -1;
+    callStack.push(mainFrame);
+    string line;
+    fseek(f, mainOffset, SEEK_SET);
+    readResolveRecord(f, line);
+    while (!callStack.isEmpty()){
+        int64_t offsetField = readResolveRecord(f, line);
+        if (offsetField == -1){
+            cout << "Error: file ended before main finished" << endl;
+            break;
+        }
+        Token tokens[MAX_TOKENS];
+        int32_t n = tokenizeLine(line, tokens, MAX_TOKENS);
+        if (n == 0){
+            continue;
+        }
+        string kw = tokens[0].text;
+        if (kw == "set"){
+            if (n < 3){
+                cout << "Error: set needs a name and a value" << endl;
+                fclose(f);
+                return;
+            }
+            Frame &cur = callStack.peek();
+            bool ok;
+            int32_t value = getValue(cur, tokens[2].text, ok);
+            if (!ok){
+                cout << "Error: unknown variable " << tokens[2].text << endl;
+                fclose(f);
+                return;
+            }
+            Variable *v = findVar(cur, tokens[1].text);
+            if (v == nullptr){
+                if (cur.localCount >= MAX_VARS_PER_FRAME){
+                    cout << "Error: too many variables in " << cur.func_name << endl;
+                    fclose(f);
+                    return;
+                }
+                v = &cur.locals[cur.localCount];
+                v->name = tokens[1].text;
+                cur.localCount++;
+            }
+            v->value = value;
+        }
+        else if (kw == "add" || kw == "sub" || kw == "mul" || kw == "div"){
+            if (n < 3){
+                cout << "Error: " << kw << " needs two operands" << endl;
+                fclose(f);
+                return;
+            }
+            Frame &cur = callStack.peek();
+            Variable *target = findVar(cur, tokens[1].text);
+            if (target == nullptr){
+                cout << "Error: unknown variable " << tokens[1].text << endl;
+                fclose(f);
+                return;
+            }
+            bool ok;
+            int32_t value = getValue(cur, tokens[2].text, ok);
+            if (!ok){
+                cout << "Error: unknown variable " << tokens[2].text << endl;
+                fclose(f);
+                return;
+            }
+            if (kw == "add"){
+                target->value += value;
+            }
+            else if (kw == "sub"){
+                target->value -= value;
+            }
+            else if (kw == "mul"){
+                target->value *= value;
+            }
+            else{
+                if (value == 0){
+                    cout << "Error: division by zero" << endl;
+                    fclose(f);
+                    return;
+                }
+                target->value /= value;
+            }
+        }
+
+        else if (kw == "call"){
+            if (n < 2){
+                cout << "Error: call needs a function name" << endl;
+                fclose(f);
+                return;
+            }
+            Frame &caller = callStack.peek();
+            int32_t argCount = n - 2;
+            int32_t d = callStack.depth();
+            if (d >= MAX_STACK_DEPTH){
+                cout << "Error: stack overflow (too many nested calls)" << endl;
+                fclose(f);
+                return;
+            }
+            long returnPos = ftell(f);
+            fseek(f, offsetField, SEEK_SET);
+            string header;
+            readResolveRecord(f, header);
+            Token ptoks[MAX_TOKENS];
+            int32_t pn = tokenizeLine(header, ptoks, MAX_TOKENS);
+            if (pn - 2 != argCount){
+                cout << "Error: wrong number of arguments for " << tokens[1].text << endl;
+                fclose(f);
+                return;
+            }
+            Frame nf = Frame();
+            nf.func_name = tokens[1].text;
+            nf.argc = argCount;
+            nf.localCount = 0;
+            nf.returnLine = (int32_t)returnPos;
+            for (int32_t i = 0; i < argCount; i++){
+                bool ok;
+                nf.argv[i].name = ptoks[2 + i].text;
+                nf.argv[i].value = getValue(caller, tokens[2 + i].text, ok);
+                if (!ok){
+                    cout << "Error: unknown variable " << tokens[2 + i].text << endl;
+                    fclose(f);
+                    return;
+                }
+                argNames[d][i] = tokens[2 + i].text;
+            }
+            callStack.push(nf);
+        }
+        else if (kw == "func_end"){
+            int32_t depthNow = callStack.depth();
+            Frame done = callStack.pop();
+            if (depthNow > 1){
+                Frame &caller = callStack.peek();
+                for (int32_t i = 0; i < done.argc; i++){
+                    Variable *v = findVar(caller, argNames[depthNow - 1][i]);
+                    if (v != nullptr){
+                        v->value = done.argv[i].value;
+                    }
+                }
+                fseek(f, done.returnLine, SEEK_SET);
+            }
+        }
+        else{
+            cout << "Error: unknown instruction " << kw << endl;
+            fclose(f);
+            return;
+        }
+        timeline.record(buildSnapshot(callStack));
+    }
+    fclose(f);
 }
 
 // PASS 0x3: SERIALIZE TIMELINE
@@ -415,7 +646,9 @@ int32_t main()
     }
 
     int64_t mainOffset = resolveProgram("source.bin", "resolve.bin");
-
+    if (mainOffset == -1){
+        return 1;
+    }
     Timeline timeline;
     executeProgram("resolve.bin", mainOffset, timeline);
 

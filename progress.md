@@ -66,3 +66,45 @@ Nesting is not allowed so at most one function can be open at any time. A single
 1. Write every line as a record. also note down where each function starts in `funcArray` and where each `call` line is in `patches`.
 2. After the whole file is written it goes back to each `call` record and overwrite its first 8 bytes with the address of the function it calls.
 
+
+### Day 5 & 6: [13 October] [3 AM] : Pass 0x2 (Execution) Stage 3
+
+**the idea**
+- we execute the program line by line and take a snapshot of the call stack after every line
+- a frame is one function call. it stores the function name, its parameters `argv` and its own variables `locals`
+- the call stack holds the frames of all active function calls. the top frame is the function running right now
+- the timeline is a doubly linked list of all the snapshots. phase 02 will move through it to go backward and forward
+
+**helper functions**
+- `findVar` finds a variable by name in one frame (parameters first, then locals)
+- `isNumber` checks if the text is a number like 10 or -5
+- `getValue` gives the value of an operand. it is either a number written in the code or a variable's value
+
+**the functions**
+- `tokenizeLine` splits a line into tokens. first word is the KEYWORD, second is the IDENTIFIER, the rest are PARAM. it returns how many tokens it found
+- `buildSnapshot` makes a new `Snapshot` with `new` and fills it with `snapshot_into`. the depth of the stack is stored in `stackDepth`
+- `executeProgram` is the main loop
+
+**how executeProgram works**
+1. make the `main` frame and push it on the stack. jump to main's address in resolve.bin and skip the `func main` header line
+2. read one record, tokenize it and check the keyword
+   - `set x 10` makes a local variable (or updates it if it already exists)
+   - `add / sub / mul / div x y` update `x`. the result is saved in the first operand. division by zero stops with an error
+   - `call foo k` makes a new frame for foo. the address of foo comes from the call record that pass 0x1 patched, so no searching. it remembers where to come back to (`returnLine`). it reads foo's own header line (`func foo b`) to learn the parameter names and copies the caller's values into them
+   - `func_end` removes the top frame and goes back to the saved place
+3. take a snapshot after every line and put it in the timeline
+4. stop when the stack is empty because it means that main is finished
+
+- in `foo`, `b` really means `k` from main. if foo changes `b`, `k` must change too
+- when calling, the value of `k` is copied into `b`
+- `argNames` remembers which caller variable each parameter came from
+- on `func_end` the final value of `b` is copied back into `k`
+- from outside it looks like `k` was changed by foo
+
+**decisions made**
+- only real instructions make a snapshot
+- `func_end` of main also makes an empty snapshot with depth 0
+- the first operand of add/sub/mul/div must already exist or `set` creates a new local if the name doesnt exist
+- a call must have the same number of arguments as the function parameters
+- on any error the execution stops and prints a message. the snapshots taken so far stays in the timeline
+- the stack can only be 64 calls deep so more calls gives a stack overflow error
