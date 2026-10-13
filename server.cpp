@@ -169,6 +169,8 @@ void writeHeader(FILE *f, const TTDBHeader &h){
     fwrite(&h.version, sizeof(int32_t), 1, f);
 
     // placeholder for other two data members
+    fwrite(&h.stepCount, sizeof(int32_t), 1, f);
+    fwrite(&h.indexOffset, sizeof(int64_t), 1, f);
 }
 
 // resolve.bin - bookkeeping
@@ -259,8 +261,7 @@ bool validateProgram(const char *sourcePath){
 }
 
 // PASS 0x1: RESOLVE() -> resolve.bin
-int64_t writeResolveRecord(FILE *f, int64_t offsetField, const string &text)
-{
+int64_t writeResolveRecord(FILE *f, int64_t offsetField, const string &text){
     // writes one [offset(8B)][size(4B)][string] record at the current file position
     // returns this record's own starting byte position
     int64_t start=ftell(f);
@@ -270,8 +271,7 @@ int64_t writeResolveRecord(FILE *f, int64_t offsetField, const string &text)
     fwrite(text.c_str(),1,size,f);
     return start;
 }
-int64_t readResolveRecord(FILE *f, string &outText)
-{
+int64_t readResolveRecord(FILE *f, string &outText){
     // reads one record at the current position and advances past it, returns the offset field - the raw line text comes back untouched in outText.
     int64_t offsetField;
     int32_t size;
@@ -287,8 +287,7 @@ int64_t readResolveRecord(FILE *f, string &outText)
     }
     return offsetField;
 }
-int64_t resolveProgram(const char *sourcePath, const char *resolveBinPath)
-{
+int64_t resolveProgram(const char *sourcePath, const char *resolveBinPath){
     FuncEntry funcArray[MAX_FUNCS];
     int32_t funcCount = 0;
     PendingPatch patches[MAX_PATCHES];
@@ -408,14 +407,12 @@ int32_t getValue(Frame &fr, const string &text, bool &ok){
 }
 
 // PASS 0x2: EXECUTION (tokenization happens here)
-enum TokenType
-{
+enum TokenType{
     KEYWORD,
     IDENTIFIER,
     PARAM
 };
-struct Token
-{
+struct Token{
     TokenType type;
     string text;
 };
@@ -628,13 +625,72 @@ void executeProgram(const char *resolveBinPath, int64_t mainOffset, Timeline &ti
 }
 
 // PASS 0x3: SERIALIZE TIMELINE
-void writeTdbg(Timeline &timeline, const char *tdbgPath)
-{
+
+//helper functions
+void writeString(FILE *f, const string &s){
+    int32_t len = s.size();
+    fwrite(&len, sizeof(int32_t), 1, f);
+    fwrite(s.c_str(), 1, len, f);
+}
+
+void writeVariable(FILE *f, const Variable &v){
+    writeString(f, v.name);
+    fwrite(&v.value, sizeof(int32_t), 1, f);
+}
+
+void writeSnapshot(FILE *f, Snapshot *s){
+    fwrite(&s->stackDepth, sizeof(int32_t), 1, f);
+    for (int32_t i = 0; i < s->stackDepth; i++){
+        Frame &fr = s->callStack[i];
+        writeString(f, fr.func_name);
+        fwrite(&fr.argc, sizeof(int32_t), 1, f);
+        for (int32_t j = 0; j < fr.argc; j++){
+            writeVariable(f, fr.argv[j]);
+        }
+        fwrite(&fr.returnLine, sizeof(int32_t), 1, f);
+        fwrite(&fr.localCount, sizeof(int32_t), 1, f);
+        for (int32_t j = 0; j < fr.localCount; j++){
+            writeVariable(f, fr.locals[j]);
+        }
+    }
+}
+
+void writeTdbg(Timeline &timeline, const char *tdbgPath){
     // placeholder for header
     // index array of the size of stepcount from the timeline
     // placing each snapshot in the file while maintaining the index(starting point of each nth snapshot)
     // after timeline add the index array i the file
     // update the header
+     FILE *f = fopen(tdbgPath, "w+b");
+    if (f == nullptr){
+        cout << "Error: cannot create " << tdbgPath << endl;
+        return;
+    }
+    int32_t steps = timeline.getStepCount();
+    TTDBHeader header;
+    header.magic[0] = 'T';
+    header.magic[1] = 'T';
+    header.magic[2] = 'D';
+    header.magic[3] = 'B';
+    header.version = 1;
+    header.stepCount = steps;
+    header.indexOffset = 0;
+    writeHeader(f, header);
+    int64_t *index = new int64_t[steps];
+    int32_t i = 0;
+    TimelineNode *node = timeline.begin();
+    while (node != nullptr && i < steps){
+        index[i] = ftell(f);
+        writeSnapshot(f, node->data);
+        node = node->next;
+        i++;
+    }
+    header.indexOffset = ftell(f);
+    fwrite(index, sizeof(int64_t), steps, f);
+    fseek(f, 0, SEEK_SET);
+    writeHeader(f, header);
+    delete[] index;
+    fclose(f);
 }
 // main section
 int32_t main()

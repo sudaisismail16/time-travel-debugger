@@ -1,5 +1,5 @@
 # time-travel-debugger
-### Day 1: [30 september]
+### Update 1: [30 september]
 **Understanding the project**
 - Read the project PDF and the `server.cpp` template.
 
@@ -12,7 +12,7 @@
 - Created the public GitHub repo, cloned it and pushed the `server.cpp`.
 - Compiled the template with `g++ server.cpp -o server`.
 
-### Day 2: [1 October] [1:00 AM]
+### Update 2: [1 October] [1:00 AM]
 
 **Data structures implemented**
 - linked-list based call stack implemented with max depth check.
@@ -30,7 +30,7 @@
 - In snapshot into, `callStack[0]` is the currently running function and `callStack[stackDepth - 1]` is the main.
 
 
-### Day 3: [1 October] [1:00 AM] : Pass 0x0 (Validation)
+### Update 3: [1 October] [1:00 AM] : Pass 0x0 (Validation)
 
 **Functions implemented**
 - `readSourceLine`: reads the next nonblank line and removes `\r` so files made on windows work. Returns `false` at the end of the file.
@@ -49,7 +49,7 @@ Nesting is not allowed so at most one function can be open at any time. A single
 **Next:** Pass 0x1 which writes `resolve.bin` and patches `call` targets.
 - took a whole day to understand this from 4-5 people in university.s
 
-### Day 4: [9 October] [1 PM] : Pass 0x1 
+### Update 4: [9 October] [1 PM] : Pass 0x1 
 **the idea**
 - when call foo k instructions runs it needs to find where foo starts
 - searching everytime would take alot of time so we store it somewhere
@@ -67,7 +67,7 @@ Nesting is not allowed so at most one function can be open at any time. A single
 2. After the whole file is written it goes back to each `call` record and overwrite its first 8 bytes with the address of the function it calls.
 
 
-### Day 5 & 6: [13 October] [3 AM] : Pass 0x2 (Execution) Stage 3
+### Update 5: [12 October] [1 AM] : Pass 0x2 (Execution) Stage 3
 
 **the idea**
 - we execute the program line by line and take a snapshot of the call stack after every line
@@ -108,3 +108,41 @@ Nesting is not allowed so at most one function can be open at any time. A single
 - a call must have the same number of arguments as the function parameters
 - on any error the execution stops and prints a message. the snapshots taken so far stays in the timeline
 - the stack can only be 64 calls deep so more calls gives a stack overflow error
+
+
+### Update 6: [13 October] [5 AM] : Pass 0x3 (Serialization) Stage 4
+
+**the idea**
+- after pass 0x2 the snapshots only exist in memory in the timeline. this pass saves them to `session.tdbg`
+- the file has three parts header, snapshot stream, dense index
+- the index has one entry for every snapshot. entry n is the address where snapshot n starts
+- snapshots have different sizes so it reads the index entry and jumps there
+
+**the functions**
+- `writeHeader` the template only wrote the magic and the version, so i added `stepCount` and `indexOffset`. the header is 20 bytes: magic 4, version 4, stepCount 4, indexOffset 8. every field is written separately
+- `writeVariable` writes the name with `writeString` and then the value
+- `writeSnapshot` writes one snapshot field by field
+- `writeTdbg` writes the whole file
+
+**snapshot format**
+- `stackDepth`
+- for each frame from top to bottom:
+  - function name
+  - `argc` and then `argc` parameters
+  - `returnLine`
+  - `localCount` and then `localCount` name and value
+- only the used parameters and locals are written
+
+**writeTdbg**
+- opens `session.tdbg` and write a placeholder header with `indexOffset = 0`. this only reserves the first 20 bytes
+- walk through the timeline from `begin()` using `next`. before writing each snapshot, save the current position with `ftell` into the index array then write the snapshot
+- after the last snapshot, the current position is `indexOffset`. write the index array there
+- jump back to the start with `fseek` and write the real header
+- the header is written twice because `indexOffset` is only known after all the snapshots are written
+
+**decisions made**
+- version is 1
+- strings are stored as a 4 byte length followed by the characters
+- index entries are 8 bytes each
+- if the file can't be created an error is printed and nothing is written
+
