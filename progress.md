@@ -146,3 +146,6 @@ Nesting is not allowed so at most one function can be open at any time. A single
 - index entries are 8 bytes each
 - if the file can't be created an error is printed and nothing is written
 
+###Project Phase 2###
+
+- Implemented Queue, Tried to understand the project.
